@@ -1,0 +1,15 @@
+{
+  "name": "glowmagazine-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GlowMagazine — static site + free-tools generator.",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "node server.mjs",
+    "dev": "node build.mjs && node server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
