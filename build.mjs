@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { SITE, CATEGORIES, TOOLS } from './tools-data.mjs';
 import { fetchPosts } from './blog.mjs';
+import { STATIC_PAGES } from './static-pages.mjs';
 
 const ROOT = dirname( fileURLToPath( import.meta.url ) );
 const ASSET_VER = '6'; // bump when CSS/JS change (busts the immutable /assets cache)
@@ -21,6 +22,7 @@ const esc = ( s = '' ) => String( s ).replace( /&/g, '&amp;' ).replace( /</g, '&
 const isReady = ( t ) => !! t.handler;
 const toolUrl = ( slug ) => `/${ slug }/`;
 const catUrl = ( c ) => `/tools/${ c }/`;
+const staticUrl = ( slug ) => `/${ slug }/`;
 
 /* ----------------------------- shared chrome ----------------------------- */
 function head( { title, desc, canonical, jsonld } ) {
@@ -37,6 +39,10 @@ function head( { title, desc, canonical, jsonld } ) {
 <meta property="og:description" content="${ esc( desc ) }">
 <meta property="og:type" content="website">
 <meta property="og:url" content="${ SITE.url }${ canonical }">
+<meta property="og:site_name" content="${ esc( SITE.name ) }">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="${ esc( title ) }">
+<meta name="twitter:description" content="${ esc( desc ) }">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -51,19 +57,19 @@ ${ jsonld ? `<script type="application/ld+json">${ JSON.stringify( jsonld ) }</s
 const HEADER = `
 <div class="announce"><div class="announce__inner">
 <div class="announce__left"><span>🎁</span><span>100% FREE Tools • No Sign Up • Instant Results</span></div>
-<nav class="announce__links"><a href="/">About Us</a><a href="/">Contact</a><a href="/">Privacy Policy</a><a href="/">Disclaimer</a></nav>
+<nav class="announce__links"><a href="${ staticUrl( 'about' ) }">About Us</a><a href="${ staticUrl( 'contact' ) }">Contact</a><a href="${ staticUrl( 'privacy-policy' ) }">Privacy Policy</a><a href="${ staticUrl( 'disclaimer' ) }">Disclaimer</a></nav>
 </div></div>
 <header class="header" id="header"><nav class="nav">
 <div class="nav__left">
 <a href="/" class="logo" aria-label="Glow Magazine home"><span class="logo__mark">Glow</span><span class="logo__sub">Magazine</span></a>
-<div class="menu"><a href="/">Home</a><a href="/tools/">Tools</a><a href="/tools/">Categories</a><a href="/blog/">Blog</a><a href="/">About Us</a><a href="/">Contact</a></div>
+<div class="menu"><a href="/">Home</a><a href="/tools/">Tools</a><a href="/tools/">Categories</a><a href="/blog/">Blog</a><a href="${ staticUrl( 'about' ) }">About Us</a><a href="${ staticUrl( 'contact' ) }">Contact</a></div>
 </div>
 <div class="nav__right">
 <a href="/tools/" class="btn btn--primary btn--pill"><span class="material-symbols-outlined">apps</span> Explore Tools</a>
 <button class="nav__toggle" id="navToggle" aria-label="Open menu" aria-expanded="false"><span class="material-symbols-outlined">menu</span></button>
 </div>
 </nav>
-<div class="mobile-menu" id="mobileMenu"><a href="/">Home</a><a href="/tools/">Tools</a><a href="/tools/">Categories</a><a href="/blog/">Blog</a><a href="/">About Us</a><a href="/">Contact</a></div>
+<div class="mobile-menu" id="mobileMenu"><a href="/">Home</a><a href="/tools/">Tools</a><a href="/tools/">Categories</a><a href="/blog/">Blog</a><a href="${ staticUrl( 'about' ) }">About Us</a><a href="${ staticUrl( 'contact' ) }">Contact</a></div>
 </header>`;
 
 const FOOTER = `
@@ -72,12 +78,12 @@ const FOOTER = `
 <div class="footer__brand">
 <a href="/" class="logo"><span class="logo__mark">Glow</span><span class="logo__sub">Magazine</span></a>
 <p class="footer__about">Your one-stop destination for free online tools, calculators, converters and generators. Fast, simple, and 100% free forever.</p>
-<div class="footer__social"><a href="/" aria-label="Website"><span class="material-symbols-outlined">public</span></a><a href="/" aria-label="Email"><span class="material-symbols-outlined">alternate_email</span></a><a href="/" aria-label="Share"><span class="material-symbols-outlined">share</span></a></div>
+<div class="footer__social"><a href="/" aria-label="Website"><span class="material-symbols-outlined">public</span></a><a href="${ staticUrl( 'contact' ) }" aria-label="Email"><span class="material-symbols-outlined">alternate_email</span></a><a href="/tools/" aria-label="Tools"><span class="material-symbols-outlined">apps</span></a></div>
 </div>
-<div class="footer__col"><h4>Quick Links</h4><ul><li><a href="/">Home</a></li><li><a href="/tools/">All Tools</a></li><li><a href="/tools/">Categories</a></li><li><a href="/blog/">Blog</a></li></ul></div>
+<div class="footer__col"><h4>Quick Links</h4><ul><li><a href="/">Home</a></li><li><a href="/tools/">All Tools</a></li><li><a href="/tools/">Categories</a></li><li><a href="/blog/">Blog</a></li><li><a href="${ staticUrl( 'about' ) }">About Us</a></li><li><a href="${ staticUrl( 'contact' ) }">Contact</a></li></ul></div>
 <div class="footer__col"><h4>Categories</h4><ul>${ Object.entries( CATEGORIES ).map( ( [ k, c ] ) => `<li><a href="${ catUrl( k ) }">${ esc( c.name ) }</a></li>` ).join( '' ) }</ul></div>
 <div class="footer__col"><h4>Popular Tools</h4><ul>${ TOOLS.filter( isReady ).slice( 0, 5 ).map( ( t ) => `<li><a href="${ toolUrl( t.slug ) }">${ esc( t.name ) }</a></li>` ).join( '' ) }</ul></div>
-<div class="footer__col"><h4>Legal</h4><ul><li><a href="/">Privacy Policy</a></li><li><a href="/">Terms of Use</a></li><li><a href="/">Disclaimer</a></li><li><a href="/">Cookie Policy</a></li></ul></div>
+<div class="footer__col"><h4>Legal</h4><ul><li><a href="${ staticUrl( 'privacy-policy' ) }">Privacy Policy</a></li><li><a href="${ staticUrl( 'terms-of-use' ) }">Terms of Use</a></li><li><a href="${ staticUrl( 'disclaimer' ) }">Disclaimer</a></li><li><a href="${ staticUrl( 'cookie-policy' ) }">Cookie Policy</a></li></ul></div>
 </div>
 <div class="footer__bottom"><p>© ${ new Date().getFullYear() } Glow Magazine. All Rights Reserved.</p><p>Made with <span class="heart">❤</span> for Everyone</p></div>
 </div></footer>
@@ -192,6 +198,30 @@ ${ searchBox }
 		+ FOOTER + `<script src="/assets/js/tool-runtime.js?v=${ ASSET_VER }"></script>\n<script src="/assets/js/tools-index.js?v=${ ASSET_VER }"></script>\n</body></html>`;
 }
 
+/* ----------------------------- static pages ----------------------------- */
+function staticPage( p ) {
+	const path = staticUrl( p.slug );
+	const graph = [
+		{ '@type': 'BreadcrumbList', itemListElement: [
+			{ '@type': 'ListItem', position: 1, name: 'Home', item: SITE.url + '/' },
+			{ '@type': 'ListItem', position: 2, name: p.name, item: SITE.url + path }
+		] },
+		{ '@type': 'WebPage', name: p.title, description: p.desc, url: SITE.url + path }
+	];
+	return head( { title: p.title, desc: p.desc, canonical: path, jsonld: { '@context': 'https://schema.org', '@graph': graph } } )
+		+ HEADER
+		+ `<main><div class="page">
+<ol class="crumbs"><li><a href="/">Home</a></li><li><span aria-current="page">${ esc( p.name ) }</span></li></ol>
+<header class="page-head"><h1>${ esc( p.name ) }</h1></header>
+<article class="article">${ p.body }</article>
+</div></main>`
+		+ FOOTER + `\n</body></html>`;
+}
+
+function robotsTxt() {
+	return `User-agent: *\nAllow: /\n\nSitemap: ${ SITE.url }/sitemap.xml\n`;
+}
+
 /* --------------------------------- blog --------------------------------- */
 const postUrl = ( slug ) => `/blog/${ slug }/`;
 
@@ -273,6 +303,7 @@ async function patchHomepageBlog( posts ) {
 /* -------------------------------- sitemap -------------------------------- */
 function sitemap( posts ) {
 	const urls = [ '/', '/tools/' ]
+		.concat( STATIC_PAGES.map( ( p ) => staticUrl( p.slug ) ) )
 		.concat( Object.keys( CATEGORIES ).map( catUrl ) )
 		.concat( TOOLS.filter( isReady ).map( ( t ) => toolUrl( t.slug ) ) )
 		.concat( posts.length ? [ '/blog/' ] : [] )
@@ -302,12 +333,14 @@ async function build() {
 		await patchHomepageBlog( posts );
 	}
 
+	for ( const p of STATIC_PAGES ) { await out( join( p.slug, 'index.html' ), staticPage( p ) ); }
+	await out( 'robots.txt', robotsTxt() );
 	await out( 'sitemap.xml', sitemap( posts ) );
 
 	const index = TOOLS.map( ( t ) => ( { slug: t.slug, name: t.name, category: CATEGORIES[ t.category ].name, icon: t.icon, url: toolUrl( t.slug ) } ) );
 	await out( join( 'assets', 'js', 'tools-index.js' ), 'window.GMT_TOOLS = ' + JSON.stringify( index ) + ';\n' );
 
-	console.log( `✓ Generated ${ n } tool pages, ${ Object.keys( CATEGORIES ).length } category pages, listing + sitemap.` );
+	console.log( `✓ Generated ${ n } tool pages, ${ Object.keys( CATEGORIES ).length } category pages, ${ STATIC_PAGES.length } static pages, listing + sitemap + robots.txt.` );
 	console.log( `✓ Live calculators: ${ TOOLS.filter( isReady ).length } / ${ TOOLS.length }` );
 	console.log( `✓ Blog pages: ${ posts.length ? posts.length + ' post(s) + listing' : 'none (static placeholder kept)' }` );
 }

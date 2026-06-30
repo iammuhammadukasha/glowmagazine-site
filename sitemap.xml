@@ -2,6 +2,12 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://glowmagazine.com/</loc></url>
   <url><loc>https://glowmagazine.com/tools/</loc></url>
+  <url><loc>https://glowmagazine.com/about/</loc></url>
+  <url><loc>https://glowmagazine.com/contact/</loc></url>
+  <url><loc>https://glowmagazine.com/privacy-policy/</loc></url>
+  <url><loc>https://glowmagazine.com/disclaimer/</loc></url>
+  <url><loc>https://glowmagazine.com/terms-of-use/</loc></url>
+  <url><loc>https://glowmagazine.com/cookie-policy/</loc></url>
   <url><loc>https://glowmagazine.com/tools/health/</loc></url>
   <url><loc>https://glowmagazine.com/tools/beauty/</loc></url>
   <url><loc>https://glowmagazine.com/tools/womens-health/</loc></url>
@@ -56,7 +62,4 @@
   <url><loc>https://glowmagazine.com/random-number-generator/</loc></url>
   <url><loc>https://glowmagazine.com/word-counter/</loc></url>
   <url><loc>https://glowmagazine.com/text-case-converter/</loc></url>
-  <url><loc>https://glowmagazine.com/blog/</loc></url>
-  <url><loc>https://glowmagazine.com/blog/Test/</loc></url>
-  <url><loc>https://glowmagazine.com/blog/Test/</loc></url>
 </urlset>
