@@ -9,13 +9,14 @@
  *
  * Run:  node build.mjs
  */
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, readFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { SITE, CATEGORIES, TOOLS } from './tools-data.mjs';
+import { fetchPosts } from './blog.mjs';
 
 const ROOT = dirname( fileURLToPath( import.meta.url ) );
-const ASSET_VER = '5'; // bump when CSS/JS change (busts the immutable /assets cache)
+const ASSET_VER = '6'; // bump when CSS/JS change (busts the immutable /assets cache)
 const esc = ( s = '' ) => String( s ).replace( /&/g, '&amp;' ).replace( /</g, '&lt;' ).replace( />/g, '&gt;' ).replace( /"/g, '&quot;' );
 const isReady = ( t ) => !! t.handler;
 const toolUrl = ( slug ) => `/${ slug }/`;
@@ -54,14 +55,14 @@ const HEADER = `
 <header class="header" id="header"><nav class="nav">
 <div class="nav__left">
 <a href="/" class="logo" aria-label="Glow Magazine home"><span class="logo__mark">Glow</span><span class="logo__sub">Magazine</span></a>
-<div class="menu"><a href="/">Home</a><a href="/tools/">Tools</a><a href="/tools/">Categories</a><a href="/">Blog</a><a href="/">About Us</a><a href="/">Contact</a></div>
+<div class="menu"><a href="/">Home</a><a href="/tools/">Tools</a><a href="/tools/">Categories</a><a href="/blog/">Blog</a><a href="/">About Us</a><a href="/">Contact</a></div>
 </div>
 <div class="nav__right">
 <a href="/tools/" class="btn btn--primary btn--pill"><span class="material-symbols-outlined">apps</span> Explore Tools</a>
 <button class="nav__toggle" id="navToggle" aria-label="Open menu" aria-expanded="false"><span class="material-symbols-outlined">menu</span></button>
 </div>
 </nav>
-<div class="mobile-menu" id="mobileMenu"><a href="/">Home</a><a href="/tools/">Tools</a><a href="/tools/">Categories</a><a href="/">Blog</a><a href="/">About Us</a><a href="/">Contact</a></div>
+<div class="mobile-menu" id="mobileMenu"><a href="/">Home</a><a href="/tools/">Tools</a><a href="/tools/">Categories</a><a href="/blog/">Blog</a><a href="/">About Us</a><a href="/">Contact</a></div>
 </header>`;
 
 const FOOTER = `
@@ -72,7 +73,7 @@ const FOOTER = `
 <p class="footer__about">Your one-stop destination for free online tools, calculators, converters and generators. Fast, simple, and 100% free forever.</p>
 <div class="footer__social"><a href="/" aria-label="Website"><span class="material-symbols-outlined">public</span></a><a href="/" aria-label="Email"><span class="material-symbols-outlined">alternate_email</span></a><a href="/" aria-label="Share"><span class="material-symbols-outlined">share</span></a></div>
 </div>
-<div class="footer__col"><h4>Quick Links</h4><ul><li><a href="/">Home</a></li><li><a href="/tools/">All Tools</a></li><li><a href="/tools/">Categories</a></li><li><a href="/">Blog</a></li></ul></div>
+<div class="footer__col"><h4>Quick Links</h4><ul><li><a href="/">Home</a></li><li><a href="/tools/">All Tools</a></li><li><a href="/tools/">Categories</a></li><li><a href="/blog/">Blog</a></li></ul></div>
 <div class="footer__col"><h4>Categories</h4><ul>${ Object.entries( CATEGORIES ).map( ( [ k, c ] ) => `<li><a href="${ catUrl( k ) }">${ esc( c.name ) }</a></li>` ).join( '' ) }</ul></div>
 <div class="footer__col"><h4>Popular Tools</h4><ul>${ TOOLS.filter( isReady ).slice( 0, 5 ).map( ( t ) => `<li><a href="${ toolUrl( t.slug ) }">${ esc( t.name ) }</a></li>` ).join( '' ) }</ul></div>
 <div class="footer__col"><h4>Legal</h4><ul><li><a href="/">Privacy Policy</a></li><li><a href="/">Terms of Use</a></li><li><a href="/">Disclaimer</a></li><li><a href="/">Cookie Policy</a></li></ul></div>
@@ -190,11 +191,91 @@ ${ searchBox }
 		+ FOOTER + `<script src="/assets/js/tool-runtime.js?v=${ ASSET_VER }"></script>\n<script src="/assets/js/tools-index.js?v=${ ASSET_VER }"></script>\n</body></html>`;
 }
 
+/* --------------------------------- blog --------------------------------- */
+const postUrl = ( slug ) => `/blog/${ slug }/`;
+
+function postCard( p ) {
+	const media = p.cover
+		? `<div class="post__media"><img src="${ esc( p.cover ) }" alt="${ esc( p.coverAlt ) }" loading="lazy"></div>`
+		: '';
+	return `<article class="post">
+${ media }
+<div class="post__body">
+<div class="post__meta"><span class="badge ${ p.tint }">${ esc( p.category ) }</span><span class="post__date">${ esc( p.date ) }</span></div>
+<h3><a href="${ postUrl( p.slug ) }">${ esc( p.title ) }</a></h3>
+<p class="post__excerpt">${ esc( p.excerpt ) }</p>
+<a href="${ postUrl( p.slug ) }" class="post__link">Read More <span class="material-symbols-outlined">arrow_forward</span></a>
+</div>
+</article>`;
+}
+
+function blogListingPage( posts ) {
+	return head( { title: 'Blog — Articles, Tips & Guides | Glow Magazine', desc: 'Read the latest articles, tips and guides from Glow Magazine on health, beauty, finance and everyday productivity.', canonical: '/blog/' } )
+		+ HEADER
+		+ `<main><div class="page page--wide">
+<ol class="crumbs"><li><a href="/">Home</a></li><li><span aria-current="page">Blog</span></li></ol>
+<header class="page-head"><span class="eyebrow">From Our Blog</span><h1>Articles &amp; Guides</h1><p>Tips, guides and insights to help you get more out of our free tools.</p></header>
+<div class="blog-grid">${ posts.map( postCard ).join( '' ) }</div>
+</div></main>`
+		+ FOOTER + `<script src="/assets/js/main.js?v=${ ASSET_VER }"></script>\n</body></html>`;
+}
+
+function blogPostPage( p, posts ) {
+	const related = posts.filter( ( x ) => x.slug !== p.slug ).slice( 0, 3 );
+	const graph = [
+		{ '@type': 'BreadcrumbList', itemListElement: [
+			{ '@type': 'ListItem', position: 1, name: 'Home', item: SITE.url + '/' },
+			{ '@type': 'ListItem', position: 2, name: 'Blog', item: SITE.url + '/blog/' },
+			{ '@type': 'ListItem', position: 3, name: p.title, item: SITE.url + postUrl( p.slug ) }
+		] },
+		{ '@type': 'BlogPosting', headline: p.title, description: p.seoDescription, image: p.cover || undefined,
+		  datePublished: p.iso, dateModified: p.iso, mainEntityOfPage: SITE.url + postUrl( p.slug ),
+		  author: { '@type': 'Organization', name: SITE.name }, publisher: { '@type': 'Organization', name: SITE.name } }
+	];
+
+	const hero = p.cover ? `<div class="article__hero"><img src="${ esc( p.cover ) }" alt="${ esc( p.coverAlt ) }"></div>` : '';
+	const relatedHtml = related.length
+		? `<section class="tool-section"><h2>More from the blog</h2><div class="blog-grid">${ related.map( postCard ).join( '' ) }</div></section>`
+		: '';
+
+	return head( { title: p.seoTitle, desc: p.seoDescription, canonical: postUrl( p.slug ), jsonld: { '@context': 'https://schema.org', '@graph': graph } } )
+		+ HEADER
+		+ `<main><div class="page">
+<ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/blog/">Blog</a></li><li><span aria-current="page">${ esc( p.title ) }</span></li></ol>
+<header class="tool-head">
+<span class="eyebrow"><span class="badge ${ p.tint }">${ esc( p.category ) }</span> ${ esc( p.date ) }</span>
+<h1 class="tool-head__title">${ esc( p.title ) }</h1>
+${ p.excerpt ? `<p class="tool-head__intro">${ esc( p.excerpt ) }</p>` : '' }
+</header>
+${ hero }
+${ ad( 'below_heading' ) }
+<article class="article">${ p.bodyHtml }</article>
+${ ad( 'below_result' ) }
+${ relatedHtml }
+</div></main>`
+		+ FOOTER + `<script src="/assets/js/main.js?v=${ ASSET_VER }"></script>\n</body></html>`;
+}
+
+/* Inject the latest posts into the homepage blog grid (between markers). */
+async function patchHomepageBlog( posts ) {
+	const file = join( ROOT, 'index.html' );
+	let html;
+	try { html = await readFile( file, 'utf8' ); } catch { return; }
+	const START = '<!-- BLOG:START -->', END = '<!-- BLOG:END -->';
+	const a = html.indexOf( START ), b = html.indexOf( END );
+	if ( a === -1 || b === -1 ) { console.warn( '⚠ Homepage blog markers not found — skipped homepage injection.' ); return; }
+	const cards = posts.slice( 0, 4 ).map( postCard ).join( '\n' );
+	const next = html.slice( 0, a + START.length ) + '\n' + cards + '\n\t\t\t' + html.slice( b );
+	if ( next !== html ) { await writeFile( file, next, 'utf8' ); console.log( '✓ Homepage blog grid updated from Contentful.' ); }
+}
+
 /* -------------------------------- sitemap -------------------------------- */
-function sitemap() {
+function sitemap( posts ) {
 	const urls = [ '/', '/tools/' ]
 		.concat( Object.keys( CATEGORIES ).map( catUrl ) )
-		.concat( TOOLS.filter( isReady ).map( ( t ) => toolUrl( t.slug ) ) );
+		.concat( TOOLS.filter( isReady ).map( ( t ) => toolUrl( t.slug ) ) )
+		.concat( posts.length ? [ '/blog/' ] : [] )
+		.concat( posts.map( ( p ) => postUrl( p.slug ) ) );
 	const body = urls.map( ( u ) => `  <url><loc>${ SITE.url }${ u }</loc></url>` ).join( '\n' );
 	return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${ body }\n</urlset>\n`;
 }
@@ -211,12 +292,22 @@ async function build() {
 	for ( const t of TOOLS ) { await out( join( t.slug, 'index.html' ), toolPage( t ) ); n++; }
 	await out( join( 'tools', 'index.html' ), listingPage() );
 	for ( const [ key, cat ] of Object.entries( CATEGORIES ) ) { await out( join( 'tools', key, 'index.html' ), categoryPage( key, cat ) ); }
-	await out( 'sitemap.xml', sitemap() );
+
+	/* ------------------------------- blog -------------------------------- */
+	const posts = await fetchPosts();
+	if ( posts.length ) {
+		await out( join( 'blog', 'index.html' ), blogListingPage( posts ) );
+		for ( const p of posts ) { await out( join( 'blog', p.slug, 'index.html' ), blogPostPage( p, posts ) ); }
+		await patchHomepageBlog( posts );
+	}
+
+	await out( 'sitemap.xml', sitemap( posts ) );
 
 	const index = TOOLS.map( ( t ) => ( { slug: t.slug, name: t.name, category: CATEGORIES[ t.category ].name, icon: t.icon, url: toolUrl( t.slug ) } ) );
 	await out( join( 'assets', 'js', 'tools-index.js' ), 'window.GMT_TOOLS = ' + JSON.stringify( index ) + ';\n' );
 
 	console.log( `✓ Generated ${ n } tool pages, ${ Object.keys( CATEGORIES ).length } category pages, listing + sitemap.` );
 	console.log( `✓ Live calculators: ${ TOOLS.filter( isReady ).length } / ${ TOOLS.length }` );
+	console.log( `✓ Blog pages: ${ posts.length ? posts.length + ' post(s) + listing' : 'none (static placeholder kept)' }` );
 }
 build().catch( ( e ) => { console.error( e ); process.exit( 1 ); } );
