@@ -297,6 +297,8 @@ input { font-family: inherit; }
 .post__body { padding: 24px; }
 .post__meta { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .badge { padding: 4px 12px; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+a.badge { text-decoration: none; display: inline-block; }
+a.badge:hover { opacity: .85; }
 .post__date { font-size: 10px; color: var(--muted); }
 .post h3 { font-size: 18px; font-weight: 700; line-height: 1.35; margin-bottom: 12px; transition: color .15s ease; }
 .post:hover h3 { color: var(--primary); }

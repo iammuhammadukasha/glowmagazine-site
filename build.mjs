@@ -13,11 +13,12 @@ import { writeFile, readFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { SITE, CATEGORIES, TOOLS } from './tools-data.mjs';
-import { fetchPosts } from './blog.mjs';
+import { fetchBlogData } from './blog.mjs';
 import { STATIC_PAGES } from './static-pages.mjs';
+import { BLOG_CATEGORIES } from './blog-categories.mjs';
 
 const ROOT = dirname( fileURLToPath( import.meta.url ) );
-const ASSET_VER = '6'; // bump when CSS/JS change (busts the immutable /assets cache)
+const ASSET_VER = '7';
 const esc = ( s = '' ) => String( s ).replace( /&/g, '&amp;' ).replace( /</g, '&lt;' ).replace( />/g, '&gt;' ).replace( /"/g, '&quot;' );
 const isReady = ( t ) => !! t.handler;
 const toolUrl = ( slug ) => `/${ slug }/`;
@@ -65,6 +66,10 @@ const HEADER = `
 <div class="menu"><a href="/">Home</a><a href="/tools/">Tools</a><a href="/tools/">Categories</a><a href="/blog/">Blog</a><a href="${ staticUrl( 'about' ) }">About Us</a><a href="${ staticUrl( 'contact' ) }">Contact</a></div>
 </div>
 <div class="nav__right">
+<form class="search" action="/search/" method="get" role="search">
+<input type="search" name="q" placeholder="Search tools, articles…" aria-label="Search">
+<span class="material-symbols-outlined">search</span>
+</form>
 <a href="/tools/" class="btn btn--primary btn--pill"><span class="material-symbols-outlined">apps</span> Explore Tools</a>
 <button class="nav__toggle" id="navToggle" aria-label="Open menu" aria-expanded="false"><span class="material-symbols-outlined">menu</span></button>
 </div>
@@ -224,6 +229,61 @@ function robotsTxt() {
 
 /* --------------------------------- blog --------------------------------- */
 const postUrl = ( slug ) => `/blog/${ slug }/`;
+const blogCatUrl = ( slug ) => `/category/${ slug }/`;
+const authorUrl = ( slug ) => `/author/${ slug }/`;
+const tagUrl = ( slug ) => `/tag/${ slug }/`;
+
+function mergeBlogCategories( posts, cfCategories ) {
+	const map = new Map( BLOG_CATEGORIES.map( ( c ) => [ c.slug, { ...c } ] ) );
+	for ( const c of cfCategories ) map.set( c.slug, { ...map.get( c.slug ), ...c } );
+	for ( const p of posts ) {
+		if ( ! map.has( p.categorySlug ) ) {
+			map.set( p.categorySlug, {
+				slug: p.categorySlug,
+				name: p.categoryName,
+				title: `${ p.categoryName } Articles | Glow Magazine`,
+				desc: `Read ${ p.categoryName } articles, tips and guides on Glow Magazine.`,
+				blurb: `Articles about ${ p.categoryName }.`,
+				toolCategory: '',
+			} );
+		}
+	}
+	return [ ...map.values() ].sort( ( a, b ) => a.name.localeCompare( b.name ) );
+}
+
+function mergeTags( posts, cfTags ) {
+	const map = new Map( cfTags.map( ( t ) => [ t.slug, { ...t } ] ) );
+	for ( const p of posts ) {
+		for ( const t of p.tags || [] ) {
+			if ( ! map.has( t.slug ) ) map.set( t.slug, t );
+		}
+	}
+	return [ ...map.values() ].sort( ( a, b ) => a.name.localeCompare( b.name ) );
+}
+
+function mergeAuthors( posts, cfAuthors ) {
+	const map = new Map( cfAuthors.map( ( a ) => [ a.slug, { ...a } ] ) );
+	for ( const p of posts ) {
+		if ( p.author && ! map.has( p.author.slug ) ) map.set( p.author.slug, p.author );
+	}
+	return [ ...map.values() ].sort( ( a, b ) => a.name.localeCompare( b.name ) );
+}
+
+function relatedPosts( post, posts, limit = 5 ) {
+	return posts
+		.filter( ( x ) => x.slug !== post.slug && x.categorySlug === post.categorySlug )
+		.slice( 0, limit );
+}
+
+function relatedToolsForPost( post, blogCat ) {
+	const picked = ( post.relatedTools || [] )
+		.map( ( s ) => TOOLS.find( ( t ) => t.slug === s ) )
+		.filter( Boolean );
+	if ( picked.length ) return picked.slice( 0, 3 );
+	const key = blogCat?.toolCategory;
+	if ( key ) return TOOLS.filter( ( t ) => t.category === key && isReady( t ) ).slice( 0, 3 );
+	return TOOLS.filter( isReady ).slice( 0, 3 );
+}
 
 function postCard( p ) {
 	const media = p.cover
@@ -232,7 +292,7 @@ function postCard( p ) {
 	return `<article class="post">
 ${ media }
 <div class="post__body">
-<div class="post__meta"><span class="badge ${ p.tint }">${ esc( p.category ) }</span><span class="post__date">${ esc( p.date ) }</span></div>
+<div class="post__meta"><a href="${ blogCatUrl( p.categorySlug ) }" class="badge ${ p.tint }">${ esc( p.categoryName ) }</a><span class="post__date">${ esc( p.date ) }</span></div>
 <h3><a href="${ postUrl( p.slug ) }">${ esc( p.title ) }</a></h3>
 <p class="post__excerpt">${ esc( p.excerpt ) }</p>
 <a href="${ postUrl( p.slug ) }" class="post__link">Read More <span class="material-symbols-outlined">arrow_forward</span></a>
@@ -240,51 +300,188 @@ ${ media }
 </article>`;
 }
 
-function blogListingPage( posts ) {
+function blogListingPage( posts, categories ) {
+	const catNav = categories.length
+		? `<nav class="archive-nav" aria-label="Blog categories">${ categories.map( ( c ) => `<a href="${ blogCatUrl( c.slug ) }">${ esc( c.name ) }</a>` ).join( '' ) }</nav>`
+		: '';
 	return head( { title: 'Blog — Articles, Tips & Guides | Glow Magazine', desc: 'Read the latest articles, tips and guides from Glow Magazine on health, beauty, finance and everyday productivity.', canonical: '/blog/' } )
 		+ HEADER
 		+ `<main><div class="page page--wide">
 <ol class="crumbs"><li><a href="/">Home</a></li><li><span aria-current="page">Blog</span></li></ol>
 <header class="page-head"><span class="eyebrow">From Our Blog</span><h1>Articles &amp; Guides</h1><p>Tips, guides and insights to help you get more out of our free tools.</p></header>
-<div class="blog-grid">${ posts.map( postCard ).join( '' ) }</div>
+${ catNav }
+<div class="blog-grid">${ posts.length ? posts.map( postCard ).join( '' ) : '<p class="gmt-notice">No articles yet — check back soon.</p>' }</div>
 </div></main>`
 		+ FOOTER + `<script src="/assets/js/main.js?v=${ ASSET_VER }"></script>\n</body></html>`;
 }
 
-function blogPostPage( p, posts ) {
-	const related = posts.filter( ( x ) => x.slug !== p.slug ).slice( 0, 3 );
+function blogPostPage( p, posts, blogCategories ) {
+	const related = relatedPosts( p, posts );
+	const blogCat = blogCategories.find( ( c ) => c.slug === p.categorySlug );
+	const tools = relatedToolsForPost( p, blogCat );
+	const authorSchema = p.author
+		? { '@type': 'Person', name: p.author.name, url: SITE.url + authorUrl( p.author.slug ) }
+		: { '@type': 'Organization', name: SITE.name, url: SITE.url + '/' };
+
 	const graph = [
 		{ '@type': 'BreadcrumbList', itemListElement: [
 			{ '@type': 'ListItem', position: 1, name: 'Home', item: SITE.url + '/' },
 			{ '@type': 'ListItem', position: 2, name: 'Blog', item: SITE.url + '/blog/' },
-			{ '@type': 'ListItem', position: 3, name: p.title, item: SITE.url + postUrl( p.slug ) }
+			{ '@type': 'ListItem', position: 3, name: p.categoryName, item: SITE.url + blogCatUrl( p.categorySlug ) },
+			{ '@type': 'ListItem', position: 4, name: p.title, item: SITE.url + postUrl( p.slug ) }
 		] },
-		{ '@type': 'BlogPosting', headline: p.title, description: p.seoDescription, image: p.cover || undefined,
-		  datePublished: p.iso, dateModified: p.iso, mainEntityOfPage: SITE.url + postUrl( p.slug ),
-		  author: { '@type': 'Organization', name: SITE.name }, publisher: { '@type': 'Organization', name: SITE.name } }
+		{ '@type': 'Article', headline: p.title, description: p.seoDescription, image: p.cover || undefined,
+		  datePublished: p.iso, dateModified: p.updatedIso, mainEntityOfPage: SITE.url + postUrl( p.slug ),
+		  author: authorSchema,
+		  publisher: { '@type': 'Organization', name: SITE.name, url: SITE.url + '/' },
+		  articleSection: p.categoryName }
 	];
 
 	const hero = p.cover ? `<div class="article__hero"><img src="${ esc( p.cover ) }" alt="${ esc( p.coverAlt ) }"></div>` : '';
+	const byline = p.author
+		? `<p class="article__byline">By <a href="${ authorUrl( p.author.slug ) }">${ esc( p.author.name ) }</a>${ p.author.role ? ` · ${ esc( p.author.role ) }` : '' }</p>`
+		: '';
+	const tagsHtml = ( p.tags && p.tags.length )
+		? `<div class="article__tags">${ p.tags.map( ( t ) => `<a href="${ tagUrl( t.slug ) }" class="tag">${ esc( t.name ) }</a>` ).join( '' ) }</div>`
+		: '';
 	const relatedHtml = related.length
-		? `<section class="tool-section"><h2>More from the blog</h2><div class="blog-grid">${ related.map( postCard ).join( '' ) }</div></section>`
+		? `<section class="tool-section"><h2>Related articles</h2><div class="blog-grid">${ related.map( postCard ).join( '' ) }</div></section>`
+		: '';
+	const toolsHtml = tools.length
+		? `<section class="tool-section"><h2>Try these free tools</h2><div class="tools-grid">${ tools.map( toolCard ).join( '' ) }</div></section>`
 		: '';
 
 	return head( { title: p.seoTitle, desc: p.seoDescription, canonical: postUrl( p.slug ), jsonld: { '@context': 'https://schema.org', '@graph': graph } } )
 		+ HEADER
 		+ `<main><div class="page">
-<ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/blog/">Blog</a></li><li><span aria-current="page">${ esc( p.title ) }</span></li></ol>
+<ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/blog/">Blog</a></li><li><a href="${ blogCatUrl( p.categorySlug ) }">${ esc( p.categoryName ) }</a></li><li><span aria-current="page">${ esc( p.title ) }</span></li></ol>
 <header class="tool-head">
-<span class="eyebrow"><span class="badge ${ p.tint }">${ esc( p.category ) }</span> ${ esc( p.date ) }</span>
+<span class="eyebrow"><a href="${ blogCatUrl( p.categorySlug ) }" class="badge ${ p.tint }">${ esc( p.categoryName ) }</a> ${ esc( p.date ) }</span>
 <h1 class="tool-head__title">${ esc( p.title ) }</h1>
+${ byline }
 ${ p.excerpt ? `<p class="tool-head__intro">${ esc( p.excerpt ) }</p>` : '' }
+${ tagsHtml }
 </header>
 ${ hero }
 ${ ad( 'below_heading' ) }
 <article class="article">${ p.bodyHtml }</article>
 ${ ad( 'below_result' ) }
 ${ relatedHtml }
+${ toolsHtml }
 </div></main>`
 		+ FOOTER + `<script src="/assets/js/main.js?v=${ ASSET_VER }"></script>\n</body></html>`;
+}
+
+function categoryArchivePage( cat, posts ) {
+	const tools = cat.toolCategory
+		? TOOLS.filter( ( t ) => t.category === cat.toolCategory && isReady( t ) ).slice( 0, 6 )
+		: TOOLS.filter( isReady ).slice( 0, 6 );
+	const catPosts = posts.filter( ( p ) => p.categorySlug === cat.slug );
+	const graph = [
+		{ '@type': 'BreadcrumbList', itemListElement: [
+			{ '@type': 'ListItem', position: 1, name: 'Home', item: SITE.url + '/' },
+			{ '@type': 'ListItem', position: 2, name: 'Blog', item: SITE.url + '/blog/' },
+			{ '@type': 'ListItem', position: 3, name: cat.name, item: SITE.url + blogCatUrl( cat.slug ) }
+		] },
+		{ '@type': 'CollectionPage', name: cat.title, description: cat.desc, url: SITE.url + blogCatUrl( cat.slug ) }
+	];
+	return head( { title: cat.title, desc: cat.desc, canonical: blogCatUrl( cat.slug ), jsonld: { '@context': 'https://schema.org', '@graph': graph } } )
+		+ HEADER
+		+ `<main><div class="page page--wide">
+<ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/blog/">Blog</a></li><li><span aria-current="page">${ esc( cat.name ) }</span></li></ol>
+<header class="page-head"><span class="eyebrow">Category</span><h1>${ esc( cat.name ) }</h1><p>${ esc( cat.blurb || cat.desc ) }</p></header>
+<div class="blog-grid">${ catPosts.length ? catPosts.map( postCard ).join( '' ) : '<p class="gmt-notice">Articles in this category are coming soon.</p>' }</div>
+${ tools.length ? `<section class="tool-section"><h2>Free ${ esc( cat.name ) } Tools</h2><div class="tools-grid">${ tools.map( toolCard ).join( '' ) }</div></section>` : '' }
+</div></main>`
+		+ FOOTER + `<script src="/assets/js/main.js?v=${ ASSET_VER }"></script>\n</body></html>`;
+}
+
+function authorArchivePage( author, posts ) {
+	const authorPosts = posts.filter( ( p ) => p.author?.slug === author.slug );
+	const graph = [
+		{ '@type': 'BreadcrumbList', itemListElement: [
+			{ '@type': 'ListItem', position: 1, name: 'Home', item: SITE.url + '/' },
+			{ '@type': 'ListItem', position: 2, name: 'Blog', item: SITE.url + '/blog/' },
+			{ '@type': 'ListItem', position: 3, name: author.name, item: SITE.url + authorUrl( author.slug ) }
+		] },
+		{ '@type': 'ProfilePage', name: author.seoTitle, description: author.seoDescription, url: SITE.url + authorUrl( author.slug ) }
+	];
+	const avatar = author.avatar ? `<img class="author__avatar" src="${ esc( author.avatar ) }" alt="${ esc( author.name ) }" loading="lazy">` : '';
+	return head( { title: author.seoTitle, desc: author.seoDescription, canonical: authorUrl( author.slug ), jsonld: { '@context': 'https://schema.org', '@graph': graph } } )
+		+ HEADER
+		+ `<main><div class="page page--wide">
+<ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/blog/">Blog</a></li><li><span aria-current="page">${ esc( author.name ) }</span></li></ol>
+<header class="page-head author-head">${ avatar }<div><span class="eyebrow">Author</span><h1>${ esc( author.name ) }</h1>${ author.role ? `<p>${ esc( author.role ) }</p>` : '' }${ author.bio ? `<p>${ esc( author.bio ) }</p>` : '' }</div></header>
+<div class="blog-grid">${ authorPosts.length ? authorPosts.map( postCard ).join( '' ) : '<p class="gmt-notice">No published articles yet.</p>' }</div>
+</div></main>`
+		+ FOOTER + `<script src="/assets/js/main.js?v=${ ASSET_VER }"></script>\n</body></html>`;
+}
+
+function tagArchivePage( tag, posts ) {
+	const tagged = posts.filter( ( p ) => ( p.tags || [] ).some( ( t ) => t.slug === tag.slug ) );
+	const graph = [
+		{ '@type': 'BreadcrumbList', itemListElement: [
+			{ '@type': 'ListItem', position: 1, name: 'Home', item: SITE.url + '/' },
+			{ '@type': 'ListItem', position: 2, name: 'Blog', item: SITE.url + '/blog/' },
+			{ '@type': 'ListItem', position: 3, name: tag.name, item: SITE.url + tagUrl( tag.slug ) }
+		] },
+		{ '@type': 'CollectionPage', name: tag.title, description: tag.desc, url: SITE.url + tagUrl( tag.slug ) }
+	];
+	return head( { title: tag.title || `${ tag.name } — Articles | Glow Magazine`, desc: tag.desc, canonical: tagUrl( tag.slug ), jsonld: { '@context': 'https://schema.org', '@graph': graph } } )
+		+ HEADER
+		+ `<main><div class="page page--wide">
+<ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/blog/">Blog</a></li><li><span aria-current="page">${ esc( tag.name ) }</span></li></ol>
+<header class="page-head"><span class="eyebrow">Tag</span><h1>${ esc( tag.name ) }</h1><p>Articles tagged &ldquo;${ esc( tag.name ) }&rdquo;.</p></header>
+<div class="blog-grid">${ tagged.length ? tagged.map( postCard ).join( '' ) : '<p class="gmt-notice">No articles with this tag yet.</p>' }</div>
+</div></main>`
+		+ FOOTER + `<script src="/assets/js/main.js?v=${ ASSET_VER }"></script>\n</body></html>`;
+}
+
+function searchPage() {
+	return head( { title: 'Search — Tools & Articles | Glow Magazine', desc: 'Search free online tools, calculators and blog articles on Glow Magazine.', canonical: '/search/' } )
+		+ HEADER
+		+ `<main><div class="page page--wide">
+<ol class="crumbs"><li><a href="/">Home</a></li><li><span aria-current="page">Search</span></li></ol>
+<header class="page-head"><span class="eyebrow">Site search</span><h1>Search Tools &amp; Articles</h1><p>Find calculators, converters and blog posts in one place.</p></header>
+<div class="tool-search site-search">
+<input type="search" data-site-search="input" placeholder="Search tools, articles, categories…" aria-label="Search site" autocomplete="off">
+<ul class="site-search__list" data-site-search="results" role="listbox"></ul>
+</div>
+<p class="site-search__meta" data-site-search="meta"></p>
+</div></main>`
+		+ FOOTER + `<script src="/assets/js/site-index.js?v=${ ASSET_VER }"></script>\n<script src="/assets/js/site-search.js?v=${ ASSET_VER }"></script>\n</body></html>`;
+}
+
+function buildSiteIndex( posts, blogCategories ) {
+	const items = TOOLS.filter( isReady ).map( ( t ) => ( {
+		type: 'tool',
+		name: t.name,
+		excerpt: ( t.meta || '' ).slice( 0, 140 ),
+		category: CATEGORIES[ t.category ].name,
+		url: toolUrl( t.slug ),
+		icon: t.icon,
+	} ) );
+	for ( const p of posts ) {
+		items.push( {
+			type: 'article',
+			name: p.title,
+			excerpt: ( p.excerpt || p.seoDescription || '' ).slice( 0, 140 ),
+			category: p.categoryName,
+			url: postUrl( p.slug ),
+			icon: 'article',
+		} );
+	}
+	for ( const c of blogCategories ) {
+		items.push( {
+			type: 'category',
+			name: c.name,
+			excerpt: ( c.blurb || c.desc || '' ).slice( 0, 140 ),
+			category: 'Blog category',
+			url: blogCatUrl( c.slug ),
+			icon: 'folder',
+		} );
+	}
+	return items;
 }
 
 /* Inject the latest posts into the homepage blog grid (between markers). */
@@ -301,12 +498,15 @@ async function patchHomepageBlog( posts ) {
 }
 
 /* -------------------------------- sitemap -------------------------------- */
-function sitemap( posts ) {
-	const urls = [ '/', '/tools/' ]
+function sitemap( posts, blogCategories, authors, tags ) {
+	const urls = [ '/', '/tools/', '/search/' ]
 		.concat( STATIC_PAGES.map( ( p ) => staticUrl( p.slug ) ) )
 		.concat( Object.keys( CATEGORIES ).map( catUrl ) )
 		.concat( TOOLS.filter( isReady ).map( ( t ) => toolUrl( t.slug ) ) )
-		.concat( posts.length ? [ '/blog/' ] : [] )
+		.concat( blogCategories.map( ( c ) => blogCatUrl( c.slug ) ) )
+		.concat( authors.map( ( a ) => authorUrl( a.slug ) ) )
+		.concat( tags.map( ( t ) => tagUrl( t.slug ) ) )
+		.concat( [ '/blog/' ] )
 		.concat( posts.map( ( p ) => postUrl( p.slug ) ) );
 	const body = urls.map( ( u ) => `  <url><loc>${ SITE.url }${ u }</loc></url>` ).join( '\n' );
 	return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${ body }\n</urlset>\n`;
@@ -326,22 +526,39 @@ async function build() {
 	for ( const [ key, cat ] of Object.entries( CATEGORIES ) ) { await out( join( 'tools', key, 'index.html' ), categoryPage( key, cat ) ); }
 
 	/* ------------------------------- blog -------------------------------- */
-	const posts = await fetchPosts();
+	const { posts, authors: cfAuthors, categories: cfCategories, tags: cfTags } = await fetchBlogData();
+	const blogCategories = mergeBlogCategories( posts, cfCategories );
+	const authors = mergeAuthors( posts, cfAuthors );
+	const tags = mergeTags( posts, cfTags );
+
 	if ( posts.length ) {
-		await out( join( 'blog', 'index.html' ), blogListingPage( posts ) );
-		for ( const p of posts ) { await out( join( 'blog', p.slug, 'index.html' ), blogPostPage( p, posts ) ); }
+		for ( const p of posts ) { await out( join( 'blog', p.slug, 'index.html' ), blogPostPage( p, posts, blogCategories ) ); }
 		await patchHomepageBlog( posts );
 	}
+	await out( join( 'blog', 'index.html' ), blogListingPage( posts, blogCategories ) );
+
+	for ( const cat of blogCategories ) {
+		await out( join( 'category', cat.slug, 'index.html' ), categoryArchivePage( cat, posts ) );
+	}
+	for ( const author of authors ) {
+		await out( join( 'author', author.slug, 'index.html' ), authorArchivePage( author, posts ) );
+	}
+	for ( const tag of tags ) {
+		await out( join( 'tag', tag.slug, 'index.html' ), tagArchivePage( tag, posts ) );
+	}
+	await out( join( 'search', 'index.html' ), searchPage() );
 
 	for ( const p of STATIC_PAGES ) { await out( join( p.slug, 'index.html' ), staticPage( p ) ); }
 	await out( 'robots.txt', robotsTxt() );
-	await out( 'sitemap.xml', sitemap( posts ) );
+	await out( 'sitemap.xml', sitemap( posts, blogCategories, authors, tags ) );
 
 	const index = TOOLS.map( ( t ) => ( { slug: t.slug, name: t.name, category: CATEGORIES[ t.category ].name, icon: t.icon, url: toolUrl( t.slug ) } ) );
 	await out( join( 'assets', 'js', 'tools-index.js' ), 'window.GMT_TOOLS = ' + JSON.stringify( index ) + ';\n' );
+	await out( join( 'assets', 'js', 'site-index.js' ), 'window.GMT_SITE_INDEX = ' + JSON.stringify( buildSiteIndex( posts, blogCategories ) ) + ';\n' );
 
-	console.log( `✓ Generated ${ n } tool pages, ${ Object.keys( CATEGORIES ).length } category pages, ${ STATIC_PAGES.length } static pages, listing + sitemap + robots.txt.` );
+	console.log( `✓ Generated ${ n } tool pages, ${ Object.keys( CATEGORIES ).length } tool categories, ${ STATIC_PAGES.length } static pages.` );
+	console.log( `✓ Blog archives: ${ blogCategories.length } categories, ${ authors.length } authors, ${ tags.length } tags, search page.` );
 	console.log( `✓ Live calculators: ${ TOOLS.filter( isReady ).length } / ${ TOOLS.length }` );
-	console.log( `✓ Blog pages: ${ posts.length ? posts.length + ' post(s) + listing' : 'none (static placeholder kept)' }` );
+	console.log( `✓ Blog posts: ${ posts.length ? posts.length + ' from Contentful' : 'none (static placeholder kept)' }` );
 }
 build().catch( ( e ) => { console.error( e ); process.exit( 1 ); } );

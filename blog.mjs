@@ -1,21 +1,36 @@
 /**
  * GlowMagazine — Contentful blog source.
- * Pulls published `blogPost` entries from the Content Delivery API at build time
- * and normalises them for build.mjs. No SDK / npm deps — plain fetch (Node 18+).
+ * Fetches blogPost, author, category and tag entries from the Content Delivery API.
  *
- * Required env (local .env or Vercel project env vars):
- *   CONTENTFUL_SPACE_ID
- *   CONTENTFUL_CDA_TOKEN        (Content Delivery API access token — published, not preview/CMA)
- *   CONTENTFUL_ENVIRONMENT      (optional, defaults to "master")
+ * Expected Contentful content types (create in Contentful → Content model):
+ *   blogPost   slug, title, excerpt, body, coverImage, publishedDate, updatedDate,
+ *              seoTitle, seoDescription, author (ref→author), category (ref→category or Short text),
+ *              tags (ref→tag, many), relatedTools (Short text list of tool slugs)
+ *   author     slug, name, bio, avatar, role, seoTitle, seoDescription
+ *   category   slug, name, description, seoTitle, seoDescription
+ *   tag        slug, name, seoTitle, seoDescription
  *
- * Graceful fallback: if env is missing or the API errors, fetchPosts() resolves
- * to [] and the build keeps the static placeholder blog instead of failing.
+ * Graceful fallback: missing env or API errors → empty data; static blog placeholders kept.
  */
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { BLOG_CATEGORIES, CATEGORY_ALIASES } from './blog-categories.mjs';
 
 const ROOT = dirname( fileURLToPath( import.meta.url ) );
+
+const PILLAR_BY_SLUG = new Map( BLOG_CATEGORIES.map( ( c ) => [ c.slug, c ] ) );
+
+export function slugify( s = '' ) {
+	return String( s ).trim().toLowerCase()
+		.replace( /[^a-z0-9]+/g, '-' )
+		.replace( /^-|-$/g, '' ) || 'uncategorized';
+}
+
+function resolveCategorySlug( raw ) {
+	const slug = slugify( raw );
+	return CATEGORY_ALIASES[ slug ] || slug;
+}
 
 /* --------------------------- tiny .env loader --------------------------- */
 async function loadEnv() {
@@ -28,10 +43,9 @@ async function loadEnv() {
 			if ( ( v.startsWith( '"' ) && v.endsWith( '"' ) ) || ( v.startsWith( "'" ) && v.endsWith( "'" ) ) ) v = v.slice( 1, -1 );
 			if ( process.env[ m[ 1 ] ] === undefined ) process.env[ m[ 1 ] ] = v;
 		}
-	} catch { /* no .env — rely on real process.env (e.g. Vercel) */ }
+	} catch { /* no .env */ }
 }
 
-/* ------------------------------ html escape ------------------------------ */
 const esc = ( s = '' ) => String( s ).replace( /&/g, '&amp;' ).replace( /</g, '&lt;' ).replace( />/g, '&gt;' ).replace( /"/g, '&quot;' );
 
 /* --------------------- Contentful rich-text -> HTML --------------------- */
@@ -54,7 +68,7 @@ function renderNode( node, assets ) {
 	switch ( node.nodeType ) {
 		case 'text': return renderText( node );
 		case 'paragraph': return `<p>${ renderNodes( node.content, assets ) }</p>`;
-		case 'heading-1': return `<h2>${ renderNodes( node.content, assets ) }</h2>`; // H1 reserved for page title
+		case 'heading-1': return `<h2>${ renderNodes( node.content, assets ) }</h2>`;
 		case 'heading-2': return `<h2>${ renderNodes( node.content, assets ) }</h2>`;
 		case 'heading-3': return `<h3>${ renderNodes( node.content, assets ) }</h3>`;
 		case 'heading-4': return `<h4>${ renderNodes( node.content, assets ) }</h4>`;
@@ -75,12 +89,11 @@ function renderNode( node, assets ) {
 			if ( ! a || ! a.url ) return '';
 			return `<figure class="article__figure"><img src="${ esc( a.url ) }" alt="${ esc( a.title ) }" loading="lazy">${ a.title ? `<figcaption>${ esc( a.title ) }</figcaption>` : '' }</figure>`;
 		}
-		default: // embedded-entry-block/inline, tables etc. — recurse if it has children
+		default:
 			return node.content ? renderNodes( node.content, assets ) : '';
 	}
 }
 
-/* ------------------------------ normalise ------------------------------ */
 function assetMap( includes ) {
 	const map = new Map();
 	for ( const a of includes?.Asset || [] ) {
@@ -88,6 +101,12 @@ function assetMap( includes ) {
 		if ( ! file?.url ) continue;
 		map.set( a.sys.id, { url: 'https:' + file.url, title: a.fields?.title || a.fields?.description || '' } );
 	}
+	return map;
+}
+
+function entryMap( items ) {
+	const map = new Map();
+	for ( const it of items || [] ) map.set( it.sys.id, it );
 	return map;
 }
 
@@ -100,53 +119,167 @@ function fmtDate( iso ) {
 const BADGE_TINTS = [ 't-indigo', 't-purple', 't-pink', 't-blue', 't-violet' ];
 const tintFor = ( s = '' ) => BADGE_TINTS[ Array.from( s ).reduce( ( a, c ) => a + c.charCodeAt( 0 ), 0 ) % BADGE_TINTS.length ];
 
-function normalise( item, assets ) {
+function normaliseAuthor( item, assets ) {
+	const f = item?.fields || {};
+	const avatar = f.avatar?.sys?.id ? assets.get( f.avatar.sys.id ) : null;
+	return {
+		slug: f.slug || slugify( f.name ),
+		name: f.name || 'Glow Magazine',
+		bio: f.bio || '',
+		role: f.role || '',
+		avatar: avatar?.url || '',
+		seoTitle: f.seoTitle || `${ f.name } — Author | Glow Magazine`,
+		seoDescription: f.seoDescription || f.bio || `Articles by ${ f.name } on Glow Magazine.`,
+	};
+}
+
+function normaliseCategory( item ) {
+	const f = item?.fields || {};
+	const slug = f.slug || slugify( f.name );
+	const pillar = PILLAR_BY_SLUG.get( slug );
+	return {
+		slug,
+		name: f.name || pillar?.name || slug,
+		title: f.seoTitle || pillar?.title || `${ f.name } Articles | Glow Magazine`,
+		desc: f.seoDescription || f.description || pillar?.desc || `Articles in ${ f.name }.`,
+		blurb: f.description || pillar?.blurb || '',
+		toolCategory: pillar?.toolCategory || '',
+	};
+}
+
+function normaliseTag( item ) {
+	const f = item?.fields || {};
+	return {
+		slug: f.slug || slugify( f.name ),
+		name: f.name || 'Tag',
+		title: f.seoTitle || `${ f.name } — Articles | Glow Magazine`,
+		desc: f.seoDescription || `Articles tagged ${ f.name } on Glow Magazine.`,
+	};
+}
+
+function resolveRef( field, entries ) {
+	const id = field?.sys?.id;
+	return id ? entries.get( id ) : null;
+}
+
+function normalisePost( item, assets, entries ) {
 	const f = item.fields || {};
 	const cover = f.coverImage?.sys?.id ? assets.get( f.coverImage.sys.id ) : null;
 	const iso = f.publishedDate || item.sys?.createdAt;
+	const updatedIso = f.updatedDate || iso;
+
+	let categoryName = '';
+	let categorySlug = 'uncategorized';
+	const catRef = resolveRef( f.category, entries );
+	if ( catRef ) {
+		const cat = normaliseCategory( catRef );
+		categoryName = cat.name;
+		categorySlug = cat.slug;
+	} else if ( typeof f.category === 'string' && f.category ) {
+		categoryName = f.category;
+		categorySlug = resolveCategorySlug( f.category );
+	}
+
+	const authorRef = resolveRef( f.author, entries );
+	const author = authorRef ? normaliseAuthor( authorRef, assets ) : null;
+
+	const tags = [];
+	for ( const t of f.tags || [] ) {
+		const ref = resolveRef( t, entries );
+		if ( ref ) tags.push( normaliseTag( ref ) );
+		else if ( typeof t === 'string' && t ) tags.push( { slug: slugify( t ), name: t, title: '', desc: '' } );
+	}
+
+	const relatedTools = ( f.relatedTools || [] ).filter( Boolean ).map( ( s ) => String( s ).trim() );
+
 	return {
 		slug: f.slug,
 		title: f.title || 'Untitled',
-		category: f.category || 'Blog',
+		categoryName,
+		categorySlug,
 		excerpt: f.excerpt || '',
 		cover: cover?.url || '',
 		coverAlt: cover?.title || f.title || '',
 		bodyHtml: f.body ? renderNodes( f.body.content, assets ) : '',
 		iso,
+		updatedIso,
 		date: fmtDate( iso ),
-		tint: tintFor( f.category || '' ),
+		tint: tintFor( categoryName ),
 		seoTitle: f.seoTitle || f.title,
 		seoDescription: f.seoDescription || f.excerpt || '',
+		author,
+		tags,
+		relatedTools,
 	};
 }
 
-/* ------------------------------- fetch -------------------------------- */
+async function cdaFetch( space, token, envId, params ) {
+	const qs = new URLSearchParams( params );
+	const url = `https://cdn.contentful.com/spaces/${ space }/environments/${ envId }/entries?${ qs }`;
+	const res = await fetch( url, { headers: { Authorization: `Bearer ${ token }` } } );
+	if ( ! res.ok ) return null;
+	return res.json();
+}
+
+async function fetchType( space, token, envId, contentType, order ) {
+	const data = await cdaFetch( space, token, envId, {
+		content_type: contentType,
+		limit: '200',
+		include: '2',
+		...( order ? { order } : {} ),
+	} );
+	if ( ! data ) return { items: [], includes: {} };
+	return data;
+}
+
+/** @deprecated Use fetchBlogData() */
 export async function fetchPosts() {
+	const { posts } = await fetchBlogData();
+	return posts;
+}
+
+export async function fetchBlogData() {
 	await loadEnv();
 	const space = process.env.CONTENTFUL_SPACE_ID;
 	const token = process.env.CONTENTFUL_CDA_TOKEN;
 	const envId = process.env.CONTENTFUL_ENVIRONMENT || 'master';
+
 	if ( ! space || ! token ) {
 		console.warn( '⚠ Contentful env not set (CONTENTFUL_SPACE_ID / CONTENTFUL_CDA_TOKEN) — keeping static blog.' );
-		return [];
+		return { posts: [], authors: [], categories: [], tags: [] };
 	}
 
-	const url = `https://cdn.contentful.com/spaces/${ space }/environments/${ envId }/entries`
-		+ `?content_type=blogPost&order=-fields.publishedDate&include=2&limit=200`;
-
 	try {
-		const res = await fetch( url, { headers: { Authorization: `Bearer ${ token }` } } );
-		if ( ! res.ok ) {
-			console.warn( `⚠ Contentful ${ res.status } ${ res.statusText } — keeping static blog.` );
-			return [];
-		}
-		const data = await res.json();
-		const assets = assetMap( data.includes );
-		const posts = ( data.items || [] ).map( ( it ) => normalise( it, assets ) ).filter( ( p ) => p.slug );
-		console.log( `✓ Contentful: ${ posts.length } blog post(s) fetched.` );
-		return posts;
+		const [ postData, authorData, categoryData, tagData ] = await Promise.all( [
+			fetchType( space, token, envId, 'blogPost', '-fields.publishedDate' ),
+			fetchType( space, token, envId, 'author', 'fields.name' ),
+			fetchType( space, token, envId, 'category', 'fields.name' ),
+			fetchType( space, token, envId, 'tag', 'fields.name' ),
+		] );
+
+		const postAssets = assetMap( postData.includes );
+		const authorAssets = assetMap( authorData.includes );
+		const allAssets = new Map( [ ...postAssets, ...authorAssets ] );
+		const postEntries = entryMap( [
+			...( postData.items || [] ),
+			...( postData.includes?.Entry || [] ),
+			...( authorData.items || [] ),
+			...( categoryData.items || [] ),
+			...( tagData.items || [] ),
+		] );
+
+		const posts = ( postData.items || [] )
+			.map( ( it ) => normalisePost( it, allAssets, postEntries ) )
+			.filter( ( p ) => p.slug );
+
+		const authors = ( authorData.items || [] ).map( ( it ) => normaliseAuthor( it, allAssets ) ).filter( ( a ) => a.slug );
+		const categories = ( categoryData.items || [] ).map( normaliseCategory ).filter( ( c ) => c.slug );
+		const tags = ( tagData.items || [] ).map( normaliseTag ).filter( ( t ) => t.slug );
+
+		console.log( `✓ Contentful: ${ posts.length } post(s), ${ authors.length } author(s), ${ categories.length } category(ies), ${ tags.length } tag(s).` );
+		return { posts, authors, categories, tags };
 	} catch ( e ) {
 		console.warn( `⚠ Contentful fetch failed (${ e.message }) — keeping static blog.` );
-		return [];
+		return { posts: [], authors: [], categories: [], tags: [] };
 	}
 }
