@@ -6,6 +6,12 @@
   <description>Free online tools, calculators and how-to guides from Glow Magazine.</description>
   <language>en-us</language>
   <atom:link href="https://glowmagazine.com/feed.xml" rel="self" type="application/rss+xml"/>
-  <!-- no posts yet -->
+  <item>
+    <title>Test</title>
+    <link>https://glowmagazine.com/blog/Test/</link>
+    <guid isPermaLink="true">https://glowmagazine.com/blog/Test/</guid>
+    <pubDate>Mon, 29 Jun 2026 19:00:00 GMT</pubDate>
+    <description><![CDATA[Test]]></description>
+  </item>
 </channel>
 </rss>
